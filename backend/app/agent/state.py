@@ -33,8 +33,11 @@ class ResearchState(TypedDict):
     iteration: int
     max_iterations: int
 
-    # Final synthesized Markdown report
+    # Final synthesized Markdown report or clarification message
     final_report: str
+
+    # Intent flag: True if the user prompt was conversational/ambiguous and needs clarification
+    needs_clarification: bool
 
     # Status message streamed to client/terminal
     status_message: str

@@ -1,6 +1,6 @@
 """
 LangGraph Assembly & Compilation
-Wires StateGraph with nodes and conditional reflective edges.
+Wires StateGraph with nodes, intent routing, and conditional reflective edges.
 """
 import logging
 from langgraph.graph import StateGraph, START, END
@@ -11,10 +11,22 @@ from app.agent.nodes import planner_node, search_node, critic_node, synthesizer_
 logger = logging.getLogger(__name__)
 
 
+def check_topic_validity(state: ResearchState) -> str:
+    """
+    Evaluates whether the planner marked the input as needing clarification (e.g. 'Hi').
+    If True, bypasses web searches and terminates directly at END with the clarification message.
+    """
+    if state.get("needs_clarification", False):
+        logger.info("--> Topic requires clarification, routing directly to END")
+        return "end"
+    logger.info("--> Topic valid, proceeding to 'searcher'")
+    return "searcher"
+
+
 def should_continue(state: ResearchState) -> str:
     """
-    Conditional routing edge function.
-    Decides whether to loop back to 'searcher' or proceed to 'synthesizer'.
+    Conditional routing edge function for research loop.
+    Decides whether to loop back to 'searcher' for refined queries or proceed to 'synthesizer'.
     """
     gaps_found = state.get("gaps_found", False)
     queries = state.get("search_queries", [])
@@ -43,12 +55,22 @@ def build_research_graph():
     workflow.add_node("critic", critic_node)
     workflow.add_node("synthesizer", synthesizer_node)
 
-    # 2. Connect Edges
+    # 2. Connect Initial Edges
     workflow.add_edge(START, "planner")
-    workflow.add_edge("planner", "searcher")
+
+    # 3. Add Intent / Clarification Conditional Edge
+    workflow.add_conditional_edges(
+        "planner",
+        check_topic_validity,
+        {
+            "end": END,
+            "searcher": "searcher",
+        },
+    )
+
     workflow.add_edge("searcher", "critic")
 
-    # 3. Add Reflective Conditional Loop
+    # 4. Add Reflective Conditional Loop
     workflow.add_conditional_edges(
         "critic",
         should_continue,
@@ -60,7 +82,7 @@ def build_research_graph():
 
     workflow.add_edge("synthesizer", END)
 
-    # 4. Compile into executable runnable
+    # 5. Compile into executable runnable
     app = workflow.compile()
     return app
 

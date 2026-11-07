@@ -1,6 +1,7 @@
 """
 API Routes for DeepResearcher
 Provides Server-Sent Events (SSE) streaming endpoint for live agent research.
+Handles research topics and conversational clarification requests.
 """
 import json
 import logging
@@ -17,7 +18,7 @@ router = APIRouter(prefix="/api/v1")
 
 
 class ResearchRequest(BaseModel):
-    topic: str = Field(..., min_length=3, description="Topic or question to research")
+    topic: str = Field(..., min_length=1, description="Topic, question, or message to research")
     max_iterations: int = Field(default=2, ge=1, le=3, description="Maximum reflection loops")
 
 
@@ -38,6 +39,7 @@ async def _sse_generator(topic: str, max_iterations: int) -> AsyncGenerator[str,
         "iteration": 1,
         "max_iterations": max_iterations,
         "final_report": "",
+        "needs_clarification": False,
         "status_message": f"Starting research for: '{topic}'",
     }
 
@@ -56,6 +58,15 @@ async def _sse_generator(topic: str, max_iterations: int) -> AsyncGenerator[str,
                 if node_name == "planner":
                     payload["queries"] = node_output.get("plan_queries", [])
                     yield f"event: planner\ndata: {json.dumps(payload)}\n\n"
+
+                    # If input was conversational/ambiguous, yield clarification response immediately
+                    if node_output.get("needs_clarification"):
+                        clarification_payload = {
+                            "node": "planner",
+                            "status_message": status_msg,
+                            "report": node_output.get("final_report", ""),
+                        }
+                        yield f"event: report\ndata: {json.dumps(clarification_payload)}\n\n"
 
                 elif node_name == "searcher":
                     payload["sources"] = node_output.get("sources", [])
