@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: deep-researcher-backend
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.4
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: APP_ACCESS_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: "*"
