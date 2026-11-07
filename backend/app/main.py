@@ -1,12 +1,14 @@
 """
 FastAPI Application Entrypoint
-Configures CORS, security middleware, and routes.
+Configures CORS, security middleware, API routes, and serves the React SPA frontend.
 """
 import base64
 import logging
+from pathlib import Path
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.api.routes import router as api_router
@@ -43,11 +45,19 @@ app.add_middleware(
 
 # ---------------------------------------------------------------------------
 # 2. Security Passcode Middleware
+# Protects API endpoints and Swagger UI, while allowing static frontend assets.
 # ---------------------------------------------------------------------------
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
     # Always allow CORS preflights and health checks
     if request.method == "OPTIONS" or request.url.path == "/health":
+        return await call_next(request)
+
+    # Only protect API routes and Swagger docs
+    is_docs = request.url.path in ("/docs", "/redoc", "/openapi.json")
+    is_api = request.url.path.startswith("/api/")
+
+    if not (is_docs or is_api):
         return await call_next(request)
 
     # If no passcode is set, allow all (open in local dev)
@@ -76,7 +86,7 @@ async def security_middleware(request: Request, call_next):
         return await call_next(request)
 
     # For Swagger UI, return Basic Auth challenge so browser pops up login dialog
-    if request.url.path in ("/docs", "/redoc", "/openapi.json"):
+    if is_docs:
         return Response(
             status_code=401,
             content="Authentication required",
@@ -107,8 +117,40 @@ def health_check():
         "status": "ok",
         "app": settings.app_name,
         "environment": settings.environment,
+        "llm_provider": settings.llm_provider,
         "version": "0.1.0",
     }
 
 
 app.include_router(api_router)
+
+
+# ---------------------------------------------------------------------------
+# 4. React SPA Static File Serving (Single-Platform Monolith)
+# ---------------------------------------------------------------------------
+frontend_dist = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+
+if frontend_dist.exists():
+    assets_dir = frontend_dist / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        # Don't hijack API or docs routes
+        if full_path.startswith("api/") or full_path in ("docs", "redoc", "openapi.json", "health"):
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+
+        file_path = frontend_dist / full_path
+        if file_path.is_file():
+            return FileResponse(str(file_path))
+
+        return FileResponse(str(frontend_dist / "index.html"))
+else:
+    @app.get("/")
+    def root_fallback():
+        return {
+            "app": settings.app_name,
+            "status": "online",
+            "message": "Frontend build not detected in frontend/dist. In development, run 'npm run dev' in frontend directory.",
+        }

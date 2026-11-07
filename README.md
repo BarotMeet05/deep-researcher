@@ -2,7 +2,7 @@
 
 > **Autonomous Multi-Step Evidence Retrieval & Synthesis Agent**  
 > Built with **LangGraph**, **Google Gemini 2.5 Flash**, **DuckDuckGo Search**, **FastAPI SSE**, and **React + Vite**.  
-> **100% Free Tier Tooling** with **Shared Key Security Protection**.
+> **100% Free Tier Tooling** with **Single-Platform Monolithic Deployment** and **Pluggable LLM Providers**.
 
 ---
 
@@ -41,14 +41,15 @@ flowchart TD
 
 ---
 
-## ✨ Key Features
+## ✨ Key Architectural Highlights
 
+- **Single-Platform Unified Deployment:** Render hosts both the FastAPI backend and the compiled React SPA from a single service and domain. Zero CORS configuration and one single URL to share.
+- **Pluggable LLM Provider Factory:** Switch between **Google Gemini**, **Groq** (free Llama 3.3 70B), or **Hugging Face** / OpenRouter by simply toggling `LLM_PROVIDER` in `.env` — with **zero code modifications**.
 - **Autonomous Cyclic Reflection:** Employs a cyclic LangGraph state machine with recursion guards (`max_iterations = 2`) preventing infinite loops while ensuring deep coverage.
-- **100% Free-Tier Tooling:** Powered by Google's free Gemini 2.5 Flash API tier and DuckDuckGo (`ddgs`) search. Zero credit card or paid search subscriptions required.
+- **100% Free-Tier Tooling:** Powered by Google's free Gemini 2.5 Flash API tier (1,500 requests/day) and DuckDuckGo (`ddgs`) search. Zero credit card or paid search subscriptions required.
 - **Real-Time Event Streaming (SSE):** FastAPI streams live agent thoughts, queries, scraped sources, reflection critique, and the final dossier to the UI via Server-Sent Events.
 - **Shared Access Key Barrier:** Protected by an `APP_ACCESS_KEY` (`X-App-Key` header / Basic Auth on `/docs`) to prevent unauthorized usage when deployed publicly.
 - **Local History Persistence:** Completed research dossiers and citations are automatically stored in the browser's `localStorage` for offline reference and instant recall.
-- **Executive Markdown Export:** Instant copy to clipboard, `.md` file download, and formatted tables rendering with GitHub Flavored Markdown (`remark-gfm`).
 
 ---
 
@@ -57,10 +58,11 @@ flowchart TD
 | Layer | Technologies |
 |---|---|
 | **Agent Core** | Python 3.11, **LangGraph**, **LangChain Google GenAI** (`gemini-2.5-flash`), **DDGS** (DuckDuckGo) |
+| **Pluggable Providers** | Google Gemini (`gemini-2.5-flash`), Groq (`llama-3.3-70b`), Hugging Face Serverless |
 | **Backend API** | **FastAPI**, **Uvicorn**, Server-Sent Events (`StreamingResponse`), Pydantic Settings |
 | **Frontend UI** | **React 18**, **Vite 5**, **Lucide Icons**, **React-Markdown**, **Remark-GFM** |
 | **Styling** | Cybernetic Dark Theme with CSS Variables & Responsive Dual-Column Grid |
-| **Deployment** | **Render** (FastAPI Web Service) + **Vercel** (Vite Static Frontend) |
+| **Deployment** | **Render Single Web Service** (Serves both API and compiled React SPA) |
 
 ---
 
@@ -71,79 +73,73 @@ flowchart TD
 - **Node.js 18+** & npm installed
 - A free **Google Gemini API Key** from [Google AI Studio](https://aistudio.google.com/)
 
-### 2. Backend Setup
+### 2. Run Backend & Frontend in Development Mode
+
+**Terminal 1 (Backend):**
 ```bash
-# 1. Clone repository
-git clone https://github.com/BarotMeet05/deep-researcher.git
-cd deep-researcher
-
-# 2. Create and activate virtual environment
-python -m venv .venv
-# On Windows:
-.venv\Scripts\activate
-# On Linux/macOS:
-# source .venv/bin/activate
-
-# 3. Install backend dependencies
-pip install -r requirements.txt
-
-# 4. Configure environment
-cp .env.example .env
-# Edit .env and paste your GEMINI_API_KEY and choose an APP_ACCESS_KEY (e.g. researcher2026)
-
-# 5. Start the FastAPI server
 cd backend
+# With virtual environment activated:
 uvicorn app.main:app --reload --port 8000
 ```
-*Backend health check will be live at `http://127.0.0.1:8000/health`.*  
-*Protected API documentation available at `http://127.0.0.1:8000/docs` (enter your access passcode).*
+*Health check at `http://127.0.0.1:8000/health`. Swagger UI at `http://127.0.0.1:8000/docs` (Passcode: `researcher2026`).*
 
-### 3. Frontend Setup
-Open a separate terminal:
+**Terminal 2 (Frontend with Hot-Reload):**
 ```bash
 cd frontend
-
-# Install dependencies
-npm install
-
-# Start Vite dev server
 npm run dev
 ```
-*Frontend will be running at `http://localhost:5173` with proxy configured to backend `localhost:8000`.*
+*Open `http://localhost:5173`.*
 
 ---
 
-## 🔒 Security Configuration
+## 🔄 Switching LLM Providers (Zero Code Changes)
 
-To prevent unauthorized public users from draining your Gemini API quota:
-1. Set `APP_ACCESS_KEY="your-secret-passcode"` in your backend `.env` (or Render Environment Variables).
-2. All `/api/v1/*` requests require the header `X-App-Key: your-secret-passcode`.
-3. The React frontend provides a built-in Passcode modal to enter and remember this key in your browser.
-4. `/docs`, `/redoc`, and `/openapi.json` are secured with HTTP Basic Auth challenge (leave username blank or enter anything, and provide your passcode as the password).
+DeepResearcher includes a built-in provider factory (`app/agent/llm_factory.py`). To switch models, change the environment variables in `.env` (or Render dashboard):
+
+### Option 1: Google Gemini (Default)
+```bash
+LLM_PROVIDER="gemini"
+GEMINI_API_KEY="your-gemini-key"
+GEMINI_MODEL="gemini-2.5-flash"
+```
+
+### Option 2: Groq Cloud (Free Llama 3.3 70B)
+```bash
+LLM_PROVIDER="groq"
+GROQ_API_KEY="your-groq-api-key"
+GROQ_MODEL="llama-3.3-70b-versatile"
+```
+
+### Option 3: Hugging Face / OpenRouter / OpenAI
+```bash
+LLM_PROVIDER="custom"
+CUSTOM_LLM_API_KEY="your-token"
+CUSTOM_LLM_MODEL="meta-llama/Llama-3.1-8B-Instruct"
+CUSTOM_LLM_BASE_URL="https://api-inference.huggingface.co/v1"
+```
 
 ---
 
-## 📦 Deployment
+## 📦 Single-Platform Deployment (Render Only)
 
-### Deploy Backend on Render
 1. Push this repository to GitHub.
-2. Create a new **Web Service** on [Render](https://render.com).
-3. Connect your GitHub repository.
+2. Go to [Render Dashboard](https://dashboard.render.com/) -> **New** -> **Web Service**.
+3. Connect your repository.
 4. Set the following settings:
    - **Environment:** `Python 3`
-   - **Build Command:** `pip install -r requirements.txt`
-   - **Start Command:** `cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+   - **Build Command:**
+     ```bash
+     cd frontend && npm install && npm run build && cd .. && pip install -r requirements.txt
+     ```
+   - **Start Command:**
+     ```bash
+     cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+     ```
 5. Add Environment Variables:
    - `GEMINI_API_KEY`: `<your-gemini-api-key>`
-   - `APP_ACCESS_KEY`: `<your-chosen-passcode>`
-   - `ALLOWED_ORIGINS`: `*` (or your Vercel frontend URL)
-
-### Deploy Frontend on Vercel
-1. Create a new project on [Vercel](https://vercel.com) and import the repository.
-2. Set **Root Directory** to `frontend`.
-3. Add Environment Variable:
-   - `VITE_API_URL`: `https://<your-render-backend-url>.onrender.com`
-4. Click **Deploy**.
+   - `APP_ACCESS_KEY`: `<your-chosen-passcode>` (e.g. `researcher2026`)
+   - `LLM_PROVIDER`: `gemini`
+6. Click **Deploy Web Service**. Render will build the React frontend, install backend requirements, and serve your entire app from a single URL!
 
 ---
 

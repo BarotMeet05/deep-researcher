@@ -5,24 +5,13 @@ Defines the functional nodes: Planner, Searcher, Critic, and Synthesizer.
 import json
 import logging
 from pydantic import BaseModel, Field
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage
-
 from app.agent.state import ResearchState, SourceItem
+from app.agent.llm_factory import get_llm
 from app.tools.search import search_web
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
-
-
-def _get_llm(temperature: float = 0.0):
-    settings = get_settings()
-    return ChatGoogleGenerativeAI(
-        model=settings.gemini_model,
-        google_api_key=settings.gemini_api_key,
-        temperature=temperature,
-        api_version="v1beta",
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -57,7 +46,7 @@ def planner_node(state: ResearchState) -> dict:
     topic = state["topic"]
     logger.info("PlannerNode: generating queries for topic: '%s'", topic)
 
-    llm = _get_llm(temperature=0.2)
+    llm = get_llm(temperature=0.2)
     structured_llm = llm.with_structured_output(QueryPlan)
 
     system_prompt = (
@@ -144,7 +133,7 @@ def critic_node(state: ResearchState) -> dict:
         for s in sources[:15]
     )
 
-    llm = _get_llm(temperature=0.0)
+    llm = get_llm(temperature=0.0)
     structured_llm = llm.with_structured_output(CritiqueDecision)
 
     system_prompt = (
@@ -220,7 +209,7 @@ Quality Guidelines:
 
     user_msg = f"Research Topic: {topic}\n\nGathered Evidence:\n{evidence_text}\n\nWrite the comprehensive research dossier:"
 
-    llm = _get_llm(temperature=0.1)
+    llm = get_llm(temperature=0.1)
     response = llm.invoke([
         SystemMessage(content=system_prompt),
         HumanMessage(content=user_msg),
