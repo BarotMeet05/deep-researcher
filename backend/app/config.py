@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     debug: bool = Field(default=False)
 
     # Security passcode (protects API & Swagger UI)
-    app_access_key: str = Field(default="researcher2026", alias="APP_ACCESS_KEY")
+    app_access_key: str = Field(default="", alias="APP_ACCESS_KEY")
 
     # LLM Provider Selection: "gemini" | "groq" | "custom" (OpenAI-compatible)
     llm_provider: str = Field(default="gemini", alias="LLM_PROVIDER")

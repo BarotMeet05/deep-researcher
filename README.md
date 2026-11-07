@@ -81,7 +81,7 @@ cd backend
 # With virtual environment activated:
 uvicorn app.main:app --reload --port 8000
 ```
-*Health check at `http://127.0.0.1:8000/health`. Swagger UI at `http://127.0.0.1:8000/docs` (Passcode: `researcher2026`).*
+*Health check at `http://127.0.0.1:8000/health`. Swagger UI at `http://127.0.0.1:8000/docs` (Passcode: your configured `APP_ACCESS_KEY`).*
 
 **Terminal 2 (Frontend with Hot-Reload):**
 ```bash
@@ -137,7 +137,7 @@ CUSTOM_LLM_BASE_URL="https://api-inference.huggingface.co/v1"
      ```
 5. Add Environment Variables:
    - `GEMINI_API_KEY`: `<your-gemini-api-key>`
-   - `APP_ACCESS_KEY`: `<your-chosen-passcode>` (e.g. `researcher2026`)
+   - `APP_ACCESS_KEY`: `<your-chosen-passcode>`
    - `LLM_PROVIDER`: `gemini`
 6. Click **Deploy Web Service**. Render will build the React frontend, install backend requirements, and serve your entire app from a single URL!
 

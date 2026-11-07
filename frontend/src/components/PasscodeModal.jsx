@@ -59,7 +59,7 @@ export default function PasscodeModal({ isOpen, onClose, onSaved }) {
             <input
               id="passcode-input"
               type="password"
-              placeholder="e.g. researcher2026"
+              placeholder="Enter your access passcode"
               value={passcode}
               onChange={(e) => setPasscode(e.target.value)}
               className="styled-input"
