@@ -1,11 +1,9 @@
 """
 LangGraph Nodes for DeepResearcher
 Defines the functional nodes: Planner, Searcher, Critic, and Synthesizer.
-Includes strict query sanitization and relevance filtering.
+Ensures search queries are natural, self-contained phrases without artificial string concatenation.
 """
-import json
 import logging
-import re
 from pydantic import BaseModel, Field
 from langchain_core.messages import SystemMessage, HumanMessage
 from app.agent.state import ResearchState, SourceItem
@@ -16,51 +14,25 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 
-def _sanitize_query(q: str, topic: str) -> str:
-    """
-    Guarantees search queries are anchored to the core topic.
-    Prevents ambiguous single-word queries (e.g., 'future', 'pricing') from returning irrelevant noise.
-    """
-    clean = q.strip().strip('"').strip("'")
-    words = clean.split()
-
-    # Extract meaningful keywords from topic
-    topic_keywords = [
-        w.lower() for w in re.findall(r'\b[A-Za-z0-9_]{3,}\b', topic)
-        if w.lower() not in {"the", "for", "and", "vs", "versus", "with", "into"}
-    ]
-
-    has_topic_match = any(kw in clean.lower() for kw in topic_keywords[:4])
-
-    # If query is too short or doesn't mention the subject, anchor it with topic prefix
-    if len(words) <= 2 or not has_topic_match:
-        anchor = " ".join(topic.split()[:4])
-        anchored = f"{anchor} {clean}".strip()
-        logger.info("Anchored ambiguous query '%s' -> '%s'", clean, anchored)
-        return anchored
-
-    return clean
-
-
 # ---------------------------------------------------------------------------
 # Pydantic Schemas for Structured LLM Outputs
 # ---------------------------------------------------------------------------
 class QueryPlan(BaseModel):
     queries: list[str] = Field(
-        description="List of 3 to 4 specific, diverse web search queries to research the topic thoroughly."
+        description="List of 3 to 4 complete, natural web search queries to research the topic thoroughly. Each query must be a natural search phrase of at least 3 words."
     )
 
 
 class CritiqueDecision(BaseModel):
     has_gaps: bool = Field(
-        description="True if critical aspects, data points, or viewpoints are missing. False if gathered info is sufficient."
+        description="True if critical aspects, data points, or viewpoints are missing from the gathered evidence. False if gathered info is sufficient."
     )
     critique: str = Field(
-        description="Brief explanation of what information is present and what is missing."
+        description="Detailed explanation of what information is present, what is missing, and whether additional searches are genuinely required."
     )
     follow_up_queries: list[str] = Field(
         default_factory=list,
-        description="1 to 2 targeted follow-up search queries to fill the identified gaps (empty if has_gaps is False)."
+        description="1 to 2 complete, self-contained search engine queries (minimum 3 words each) targeting specific missing facts. Never output single words, category labels, or topic names like 'future', 'costs', or 'performance'."
     )
 
 
@@ -69,7 +41,7 @@ class CritiqueDecision(BaseModel):
 # ---------------------------------------------------------------------------
 def planner_node(state: ResearchState) -> dict:
     """
-    Decomposes the user's research topic into targeted, anchored search queries.
+    Decomposes the user's research topic into targeted, natural search queries.
     """
     topic = state["topic"]
     logger.info("PlannerNode: generating queries for topic: '%s'", topic)
@@ -78,11 +50,11 @@ def planner_node(state: ResearchState) -> dict:
     structured_llm = llm.with_structured_output(QueryPlan)
 
     system_prompt = (
-        "You are an expert research planner. Given a topic or question, generate 3 to 4 targeted, "
-        "diverse web search queries. Avoid vague queries; include concrete keywords, comparison terms, "
-        "and technical or industry terminology.\n"
-        "CRITICAL RULE: Every single query MUST explicitly contain the core subject nouns of the topic "
-        "(e.g., 'PostgreSQL', 'SQLite', etc.). NEVER output isolated single words like 'future', 'pricing', 'overview', or 'comparison'."
+        "You are an expert research planner. Given a research objective, decompose it into 3 to 4 specific, "
+        "natural web search queries that an engineer or analyst would enter into a search engine.\n"
+        "Each query must be a complete, natural search phrase (minimum 3 words) exploring different dimensions "
+        "(e.g., technical trade-offs, architecture, performance benchmarks, real-world adoption).\n"
+        "NEVER output single words, category titles, or abstract tags."
     )
 
     plan: QueryPlan = structured_llm.invoke([
@@ -90,16 +62,19 @@ def planner_node(state: ResearchState) -> dict:
         HumanMessage(content=f"Research Topic: {topic}"),
     ])
 
-    raw_queries = [q.strip() for q in plan.queries if q.strip()]
-    sanitized_queries = [_sanitize_query(q, topic) for q in raw_queries]
-    logger.info("PlannerNode generated %d queries: %s", len(sanitized_queries), sanitized_queries)
+    raw_queries = [q.strip().strip('"').strip("'") for q in plan.queries if q.strip()]
+    valid_queries = [q for q in raw_queries if len(q.split()) >= 3]
+    if not valid_queries:
+        valid_queries = [topic]
+
+    logger.info("PlannerNode generated %d queries: %s", len(valid_queries), valid_queries)
 
     return {
-        "plan_queries": sanitized_queries,
-        "search_queries": sanitized_queries,
+        "plan_queries": valid_queries,
+        "search_queries": valid_queries,
         "iteration": 1,
         "max_iterations": state.get("max_iterations", 2),
-        "status_message": f"Planned {len(sanitized_queries)} targeted search queries.",
+        "status_message": f"Planned {len(valid_queries)} targeted search queries.",
     }
 
 
@@ -140,7 +115,7 @@ def search_node(state: ResearchState) -> dict:
 def critic_node(state: ResearchState) -> dict:
     """
     Evaluates accumulated sources against the topic.
-    Guarantees follow-up queries are anchored and non-ambiguous.
+    Validates that any follow-up queries are complete, self-contained search phrases.
     """
     topic = state["topic"]
     iteration = state.get("iteration", 1)
@@ -166,13 +141,12 @@ def critic_node(state: ResearchState) -> dict:
     structured_llm = llm.with_structured_output(CritiqueDecision)
 
     system_prompt = (
-        "You are an objective research critic evaluating gathered web evidence against a research objective. "
-        "Determine if the current findings sufficiently cover the topic, or if critical gaps, specific metrics, "
-        "or perspectives are missing.\n"
+        "You are an objective technical research critic evaluating gathered web evidence against a research objective.\n"
+        "Evaluate whether the accumulated evidence adequately answers the topic or if critical technical gaps remain.\n"
         "CRITICAL RULES FOR FOLLOW-UP QUERIES:\n"
-        "1. Every follow-up query MUST be specific and explicitly include the core topic subject keywords (e.g., 'PostgreSQL SQLite memory usage at edge').\n"
-        "2. NEVER output vague, generic, or single-word search queries like 'Future', 'Costs', 'Performance', 'Overview', or 'Architecture'.\n"
-        "3. If gathered evidence contains zero relevant sources or off-topic results, provide full, explicit search queries directly restating the core subject."
+        "1. Every follow-up query MUST be a complete, self-contained search phrase that an engineer would type into Google (minimum 3 words).\n"
+        "2. Do NOT output single-word category tags like 'future', 'costs', 'pricing', or 'performance'.\n"
+        "3. If no further search is needed, set has_gaps=False."
     )
 
     user_msg = (
@@ -186,23 +160,32 @@ def critic_node(state: ResearchState) -> dict:
         HumanMessage(content=user_msg),
     ])
 
+    valid_followups = []
     if decision.has_gaps and decision.follow_up_queries:
-        sanitized_followups = [_sanitize_query(fq, topic) for fq in decision.follow_up_queries if fq.strip()]
-        logger.info("CriticNode: gaps identified. Refining %d queries for iteration %d: %s", len(sanitized_followups), iteration + 1, sanitized_followups)
+        for fq in decision.follow_up_queries:
+            clean_fq = fq.strip().strip('"').strip("'")
+            # Only accept complete, natural search phrases
+            if len(clean_fq.split()) >= 3:
+                valid_followups.append(clean_fq)
+            else:
+                logger.warning("Discarded invalid query fragment '%s' (not a complete search query)", clean_fq)
+
+    if valid_followups:
+        logger.info("CriticNode: gaps identified. Formulated %d targeted queries for iteration %d: %s", len(valid_followups), iteration + 1, valid_followups)
         return {
             "gaps_found": True,
             "critique": decision.critique,
-            "search_queries": sanitized_followups,
+            "search_queries": valid_followups,
             "iteration": iteration + 1,
             "status_message": f"Identified knowledge gaps: {decision.critique[:90]}...",
         }
     else:
-        logger.info("CriticNode: data sufficient. Moving to synthesis.")
+        logger.info("CriticNode: no valid follow-up queries required. Moving to synthesis.")
         return {
             "gaps_found": False,
-            "critique": decision.critique,
+            "critique": decision.critique if decision.has_gaps else "Information is comprehensive. Ready to synthesize dossier.",
             "search_queries": [],
-            "status_message": "Information is comprehensive. Ready to synthesize dossier.",
+            "status_message": "Proceeding to executive report synthesis.",
         }
 
 
