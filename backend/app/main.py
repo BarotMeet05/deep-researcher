@@ -61,28 +61,36 @@ async def security_middleware(request: Request, call_next):
         return await call_next(request)
 
     # If no passcode is set, allow all (open in local dev)
-    if not settings.app_access_key:
+    app_key = settings.app_access_key.strip().strip('"').strip("'")
+    if not app_key:
         return await call_next(request)
 
-    # Extract token from X-App-Key, Bearer, or Basic Auth
+    # 1. Check header x-app-key
     token = request.headers.get("x-app-key")
-    auth_header = request.headers.get("authorization", "")
+    if token and token.strip().strip('"').strip("'") == app_key:
+        return await call_next(request)
 
+    # 2. Check Authorization header (Bearer or Basic)
+    auth_header = request.headers.get("authorization", "").strip()
     if auth_header.startswith("Bearer "):
-        token = auth_header[7:].strip()
+        token = auth_header[7:].strip().strip('"').strip("'")
+        if token == app_key:
+            return await call_next(request)
     elif auth_header.startswith("Basic "):
         try:
             decoded = base64.b64decode(auth_header[6:].strip()).decode("utf-8")
-            _, password = decoded.split(":", 1)
-            token = password
+            parts = decoded.split(":", 1)
+            username = parts[0].strip().strip('"').strip("'")
+            password = parts[1].strip().strip('"').strip("'") if len(parts) > 1 else ""
+            # Allow entering passcode as either username OR password in the browser dialog
+            if username == app_key or password == app_key:
+                return await call_next(request)
         except Exception:
             pass
 
-    if not token:
-        token = request.query_params.get("access_key") or request.query_params.get("key")
-
-    # If token matches, continue
-    if token == settings.app_access_key:
+    # 3. Check query parameters ?access_key=... or ?key=...
+    query_key = request.query_params.get("access_key") or request.query_params.get("key")
+    if query_key and query_key.strip().strip('"').strip("'") == app_key:
         return await call_next(request)
 
     # For Swagger UI, return Basic Auth challenge so browser pops up login dialog
