@@ -28,10 +28,10 @@ export default function HistoryDrawer({
         <div className="drawer-header">
           <div className="flex items-center gap-2">
             <div className="drawer-icon-badge">
-              <History size={18} className="text-cyan-400" />
+              <History size={18} />
             </div>
             <div>
-              <h3 className="drawer-title">Research History</h3>
+              <h3 className="drawer-title">Research Archive</h3>
               <p className="drawer-subtitle">
                 {history.length} saved intelligence dossier{history.length === 1 ? '' : 's'}
               </p>
@@ -94,7 +94,7 @@ export default function HistoryDrawer({
                         <Calendar size={11} /> {dateStr}
                       </span>
                       {item.sources && (
-                        <span className="flex items-center gap-1 text-[11px] text-cyan-400/80">
+                        <span className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--accent-emerald)' }}>
                           <Layers size={11} /> {item.sources.length} sources
                         </span>
                       )}

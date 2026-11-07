@@ -31,7 +31,7 @@ export default function PasscodeModal({ isOpen, onClose, onSaved }) {
         <div className="modal-header">
           <div className="modal-title-group">
             <div className="modal-icon-badge">
-              <KeyRound size={20} className="text-cyan-400" />
+              <KeyRound size={18} />
             </div>
             <div>
               <h3 className="modal-title">Access Key & Security</h3>
@@ -45,7 +45,7 @@ export default function PasscodeModal({ isOpen, onClose, onSaved }) {
 
         <form onSubmit={handleSave} className="modal-body">
           <div className="info-banner">
-            <Lock size={16} className="text-cyan-400 shrink-0 mt-0.5" />
+            <Lock size={15} className="shrink-0 mt-0.5" style={{ color: 'var(--accent-primary)' }} />
             <p>
               This app is protected by a shared passcode to prevent unauthorized usage of search tools
               and Gemini API credits. Enter the passcode configured in your backend.
