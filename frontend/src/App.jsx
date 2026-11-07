@@ -15,7 +15,9 @@ import {
   ChevronRight,
   Zap,
   Globe,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Activity,
+  FileText
 } from 'lucide-react';
 import AgentTimeline from './components/AgentTimeline';
 import ReportViewer from './components/ReportViewer';
@@ -47,6 +49,9 @@ export default function App() {
   const [sources, setSources] = useState([]);
   const [error, setError] = useState(null);
 
+  // Responsive Mobile Tab: 'timeline' | 'report'
+  const [activeMobileTab, setActiveMobileTab] = useState('timeline');
+
   // Modals & Drawers
   const [isPasscodeOpen, setIsPasscodeOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -77,31 +82,15 @@ export default function App() {
     setSteps([]);
     setIsRunning(true);
     setActiveNode('planner');
+    setActiveMobileTab('timeline'); // Focus timeline during active search
 
     // Create abort controller for cancelling
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
-    // Track state locally for callback closures
     let collectedSources = [];
     let generatedReport = '';
     let currentSteps = [];
-
-    const updateStep = (node, patch) => {
-      setSteps((prev) => {
-        const copy = [...prev];
-        const existingIdx = copy.findIndex((s) => s.node === node && s.status === 'running');
-        if (existingIdx !== -1) {
-          copy[existingIdx] = { ...copy[existingIdx], ...patch };
-          currentSteps = copy;
-          return copy;
-        } else {
-          const newStep = { node, ...patch };
-          currentSteps = [...copy, newStep];
-          return currentSteps;
-        }
-      });
-    };
 
     try {
       await streamResearch({
@@ -128,7 +117,7 @@ export default function App() {
               title: 'Strategic Query Planning',
               status_message: data.status_message,
               queries: data.queries || [],
-              meta: `${data.queries?.length || 0} sub-queries`,
+              meta: `${data.queries?.length || 0} queries`,
             },
           ]);
         },
@@ -143,10 +132,10 @@ export default function App() {
             {
               node: 'searcher',
               status: 'completed',
-              title: 'Web Evidence Retrieval',
+              title: 'Evidence Retrieval',
               status_message: data.status_message,
               sources: newSources,
-              meta: `${newSources.length} sources found`,
+              meta: `${newSources.length} sources`,
             },
           ]);
         },
@@ -157,12 +146,12 @@ export default function App() {
             {
               node: 'critic',
               status: 'completed',
-              title: data.gaps_found ? 'Critic: Knowledge Gaps Detected' : 'Critic: Evidence Verified',
+              title: data.gaps_found ? 'Reflection: Knowledge Gaps Found' : 'Reflection: Evidence Verified',
               status_message: data.status_message,
               critique: data.critique,
               gaps_found: data.gaps_found,
               refined_queries: data.refined_queries,
-              meta: data.gaps_found ? 'Refining searches...' : 'Passed reflection',
+              meta: data.gaps_found ? 'Refining search...' : 'Verified',
             },
           ]);
         },
@@ -170,6 +159,7 @@ export default function App() {
           setActiveNode('synthesizer');
           generatedReport = data.report || '';
           setReport(generatedReport);
+          setActiveMobileTab('report'); // Auto-switch to report on mobile when complete
 
           setSteps((prev) => [
             ...prev,
@@ -186,7 +176,6 @@ export default function App() {
           setIsRunning(false);
           setActiveNode(null);
 
-          // Save completed research to LocalStorage history
           if (generatedReport) {
             const historyItem = {
               id: Date.now().toString(),
@@ -245,6 +234,7 @@ export default function App() {
     setSources(item.sources || []);
     setSteps(item.steps || []);
     setError(null);
+    setActiveMobileTab('report');
   };
 
   const handleDeleteHistoryReport = (id) => {
@@ -263,14 +253,14 @@ export default function App() {
       <header className="app-header">
         <div className="header-brand">
           <div className="brand-logo-badge">
-            <Compass size={22} className="text-cyan-400 animate-spin-slow" />
+            <Compass size={20} className="brand-icon-spin" />
           </div>
-          <div>
+          <div className="brand-text-block">
             <div className="flex items-center gap-2">
               <h1 className="brand-title">DeepResearcher</h1>
-              <span className="brand-tag">LangGraph Agent</span>
+              <span className="brand-badge">Agentic AI</span>
             </div>
-            <p className="brand-tagline">Autonomous Multi-Step Evidence Retrieval & Dossier Synthesis</p>
+            <p className="brand-tagline">Autonomous Evidence Retrieval & Dossier Synthesis</p>
           </div>
         </div>
 
@@ -278,17 +268,17 @@ export default function App() {
           <button
             className={`btn-header-pill ${hasPasscode ? 'pill-authenticated' : 'pill-unauthenticated'}`}
             onClick={() => setIsPasscodeOpen(true)}
-            title="Configure Access Passcode"
+            title="Configure Access Key"
           >
             {hasPasscode ? (
               <>
-                <ShieldCheck size={14} className="text-emerald-400" />
-                <span>Passcode Set</span>
+                <ShieldCheck size={14} className="text-emerald-400 shrink-0" />
+                <span className="hidden-xs">Access Key</span>
               </>
             ) : (
               <>
-                <KeyRound size={14} className="text-amber-400" />
-                <span>Set Key</span>
+                <KeyRound size={14} className="text-amber-400 shrink-0" />
+                <span>Enter Key</span>
               </>
             )}
           </button>
@@ -298,8 +288,8 @@ export default function App() {
             onClick={() => setIsHistoryOpen(true)}
             title="View Research History"
           >
-            <History size={14} className="text-cyan-400" />
-            <span>History</span>
+            <History size={14} className="text-cyan-400 shrink-0" />
+            <span className="hidden-xs">Archive</span>
             {history.length > 0 && <span className="pill-badge">{history.length}</span>}
           </button>
         </div>
@@ -307,7 +297,7 @@ export default function App() {
 
       {/* Main App Workspace */}
       <main className="app-main">
-        {/* Research Query Console */}
+        {/* Research Query Command Center */}
         <section className="search-console-container">
           <form
             onSubmit={(e) => {
@@ -317,44 +307,46 @@ export default function App() {
             className="search-console-form"
           >
             <div className="search-input-wrapper">
-              <Search size={20} className="search-input-icon" />
+              <Search size={18} className="search-input-icon shrink-0" />
               <input
                 type="text"
-                placeholder="Ask any complex research question, technology trade-off, market analysis..."
+                placeholder="Ask any complex technical question, architecture trade-off, or market inquiry..."
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
                 disabled={isRunning}
                 className="search-input"
               />
 
-              {isRunning ? (
-                <button
-                  type="button"
-                  onClick={handleStopResearch}
-                  className="btn-cancel-research"
-                  title="Stop agent run"
-                >
-                  <StopCircle size={18} />
-                  <span>Stop</span>
-                </button>
-              ) : (
-                <button
-                  type="submit"
-                  disabled={!topic.trim()}
-                  className="btn-execute-research"
-                >
-                  <span>Research</span>
-                  <ArrowRight size={18} />
-                </button>
-              )}
+              <div className="search-actions-group">
+                {isRunning ? (
+                  <button
+                    type="button"
+                    onClick={handleStopResearch}
+                    className="btn-cancel-research"
+                    title="Stop agent run"
+                  >
+                    <StopCircle size={16} />
+                    <span>Cancel</span>
+                  </button>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={!topic.trim()}
+                    className="btn-execute-research"
+                  >
+                    <span>Research</span>
+                    <ArrowRight size={16} />
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Depth Controls & Configuration */}
             <div className="search-controls-bar">
-              <div className="flex items-center gap-3">
-                <span className="control-label flex items-center gap-1.5">
-                  <SlidersHorizontal size={13} className="text-cyan-400" />
-                  Depth:
+              <div className="depth-controls-wrapper">
+                <span className="control-label flex items-center gap-1">
+                  <SlidersHorizontal size={12} className="text-cyan-400" />
+                  Mode:
                 </span>
                 <div className="depth-toggle-group">
                   <button
@@ -363,8 +355,8 @@ export default function App() {
                     className={`depth-toggle-btn ${maxIterations === 1 ? 'depth-active' : ''}`}
                     disabled={isRunning}
                   >
-                    <Zap size={13} />
-                    <span>Quick Scan (1 Loop)</span>
+                    <Zap size={12} />
+                    <span>Fast Scan</span>
                   </button>
                   <button
                     type="button"
@@ -372,15 +364,15 @@ export default function App() {
                     className={`depth-toggle-btn ${maxIterations === 2 ? 'depth-active' : ''}`}
                     disabled={isRunning}
                   >
-                    <Sparkles size={13} />
-                    <span>Deep Critique (2 Loops)</span>
+                    <Sparkles size={12} />
+                    <span>Deep Critique</span>
                   </button>
                 </div>
               </div>
 
               <div className="agent-runtime-badge">
                 <span className="runtime-indicator"></span>
-                <span>Gemini 2.5 Flash • DuckDuckGo Live Web</span>
+                <span>Tavily AI Search • Gemini 2.5 Flash</span>
               </div>
             </div>
           </form>
@@ -388,7 +380,7 @@ export default function App() {
           {/* Quick Example Starter Pills */}
           {!steps.length && !report && (
             <div className="examples-container">
-              <span className="examples-label">Try an example inquiry:</span>
+              <span className="examples-label">Suggested research queries:</span>
               <div className="examples-grid">
                 {EXAMPLE_TOPICS.map((ex, idx) => (
                   <button
@@ -397,8 +389,8 @@ export default function App() {
                     onClick={() => handleStartResearch(ex)}
                     className="example-chip"
                   >
-                    <ChevronRight size={13} className="example-chip-arrow" />
-                    <span>{ex}</span>
+                    <ChevronRight size={12} className="example-chip-arrow shrink-0" />
+                    <span className="truncate">{ex}</span>
                   </button>
                 ))}
               </div>
@@ -408,9 +400,9 @@ export default function App() {
           {/* Error Banner */}
           {error && (
             <div className="error-alert-banner">
-              <AlertCircle size={18} className="shrink-0 text-rose-400" />
+              <AlertCircle size={16} className="shrink-0 text-rose-400" />
               <div className="flex-1 text-sm">
-                <span className="font-semibold text-rose-300">Execution Error: </span>
+                <span className="font-semibold text-rose-300">Execution Alert: </span>
                 <span className="text-rose-200">{error}</span>
               </div>
               {error.includes('Passcode') && (
@@ -425,10 +417,32 @@ export default function App() {
           )}
         </section>
 
-        {/* Dual Split Work Area (Execution Trace & Dossier Viewer) */}
+        {/* Mobile View Tab Switcher (Visible on mobile/tablet) */}
+        <div className="mobile-tabs-bar">
+          <button
+            type="button"
+            className={`mobile-tab-btn ${activeMobileTab === 'timeline' ? 'mobile-tab-active' : ''}`}
+            onClick={() => setActiveMobileTab('timeline')}
+          >
+            <Activity size={15} />
+            <span>Agent Trace</span>
+            {steps.length > 0 && <span className="tab-pill-count">{steps.length}</span>}
+          </button>
+          <button
+            type="button"
+            className={`mobile-tab-btn ${activeMobileTab === 'report' ? 'mobile-tab-active' : ''}`}
+            onClick={() => setActiveMobileTab('report')}
+          >
+            <FileText size={15} />
+            <span>Research Dossier</span>
+            {report && <span className="tab-pill-ready">●</span>}
+          </button>
+        </div>
+
+        {/* Dual Split Work Area (Desktop: 2 columns; Mobile: Tab-controlled) */}
         <section className="work-grid">
           {/* Left Column: LangGraph Execution Trace */}
-          <div className="work-column work-column-timeline">
+          <div className={`work-column work-column-timeline ${activeMobileTab === 'timeline' ? 'mobile-show' : 'mobile-hide'}`}>
             <AgentTimeline
               steps={steps}
               isRunning={isRunning}
@@ -437,7 +451,7 @@ export default function App() {
           </div>
 
           {/* Right Column: Intelligence Dossier Viewer */}
-          <div className="work-column work-column-report">
+          <div className={`work-column work-column-report ${activeMobileTab === 'report' ? 'mobile-show' : 'mobile-hide'}`}>
             <ReportViewer
               report={report}
               topic={topic}

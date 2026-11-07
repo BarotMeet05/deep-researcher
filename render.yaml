@@ -15,5 +15,7 @@ services:
         value: gemini-2.5-flash
       - key: APP_ACCESS_KEY
         sync: false
+      - key: TAVILY_API_KEY
+        sync: false
       - key: ALLOWED_ORIGINS
         value: "*"

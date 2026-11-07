@@ -1,6 +1,6 @@
 """
 Web Search Tool
-Robust multi-backend search with automatic fallbacks for cloud environments.
+Supports Tavily AI Search (primary) with resilient multi-tier DuckDuckGo fallback.
 """
 import logging
 import re
@@ -8,6 +8,7 @@ import urllib.parse
 from typing import TypedDict
 import httpx
 from ddgs import DDGS
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +26,47 @@ def _clean_query(query: str) -> str:
     return cleaned
 
 
+def _search_tavily(query: str, api_key: str, max_results: int = 4) -> list[SearchResult]:
+    """
+    Executes search via Tavily AI Search REST API.
+    Returns clean, fact-dense snippets optimized for LLMs.
+    """
+    logger.info("Executing Tavily AI search for: '%s'", query)
+    url = "https://api.tavily.com/search"
+    payload = {
+        "api_key": api_key,
+        "query": query,
+        "search_depth": "basic",
+        "max_results": max_results,
+        "include_answer": False,
+        "include_raw_content": False,
+    }
+    try:
+        resp = httpx.post(url, json=payload, timeout=10.0)
+        if resp.status_code == 200:
+            data = resp.json()
+            raw_results = data.get("results", [])
+            results: list[SearchResult] = []
+            for item in raw_results:
+                t = item.get("title", "").strip()
+                u = item.get("url", "").strip()
+                c = item.get("content", "").strip()
+                if u and (t or c):
+                    results.append(SearchResult(title=t, url=u, snippet=c))
+            if results:
+                logger.info("Found %d high-precision results via Tavily for: '%s'", len(results), query)
+                return results
+        else:
+            logger.warning("Tavily search returned status %d: %s", resp.status_code, resp.text)
+    except Exception as exc:
+        logger.warning("Tavily search request error for '%s': %s", query, exc)
+
+    return []
+
+
 def _fallback_httpx_search(query: str, max_results: int = 4) -> list[SearchResult]:
     """
     Direct HTTP fallback to DuckDuckGo HTML endpoint with standard browser headers.
-    Used if DDGS library encounters rate limits or datacenter IP blocks.
     """
     headers = {
         "User-Agent": (
@@ -39,7 +77,6 @@ def _fallback_httpx_search(query: str, max_results: int = 4) -> list[SearchResul
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
     }
-    url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
     try:
         resp = httpx.post(
             "https://html.duckduckgo.com/html/",
@@ -54,15 +91,12 @@ def _fallback_httpx_search(query: str, max_results: int = 4) -> list[SearchResul
         html = resp.text
         results: list[SearchResult] = []
 
-        # Simple regex extraction of DuckDuckGo HTML results (avoids heavy bs4 dependency)
-        # Matches result links and snippets
         link_matches = re.findall(
             r'<a class="result__url" href="([^"]+)">\s*([^<]+)\s*</a>.*?<a class="result__snippet[^"]*"[^>]*>(.*?)</a>',
             html,
             re.DOTALL,
         )
         for href, title, snippet in link_matches[:max_results]:
-            # Clean DuckDuckGo redirect url if needed
             clean_url = href.strip()
             if "uddg=" in clean_url:
                 parsed = urllib.parse.parse_qs(urllib.parse.urlparse(clean_url).query)
@@ -82,12 +116,23 @@ def _fallback_httpx_search(query: str, max_results: int = 4) -> list[SearchResul
 
 def search_web(query: str, max_results: int = 4) -> list[SearchResult]:
     """
-    Execute a robust web search with automatic retry across backends ('lite', 'auto', and HTTP fallback).
+    Unified search entrypoint:
+    1. Attempts Tavily AI search if TAVILY_API_KEY is configured.
+    2. Falls back to DuckDuckGo multi-engine ('lite', 'auto', HTTP) if Tavily is absent or fails.
     """
     clean_q = _clean_query(query)
-    logger.info("Executing web search: '%s'", clean_q)
+    settings = get_settings()
 
-    # Attempt 1: DDGS with 'lite' backend (most reliable on cloud datacenter IPs)
+    # 1. Tavily AI Search (Primary if key exists)
+    if settings.tavily_api_key and settings.tavily_api_key.strip():
+        tavily_results = _search_tavily(clean_q, settings.tavily_api_key.strip(), max_results=max_results)
+        if tavily_results:
+            return tavily_results
+        logger.info("Tavily search yielded 0 results; engaging DuckDuckGo fallback for: '%s'", clean_q)
+
+    logger.info("Executing DuckDuckGo web search: '%s'", clean_q)
+
+    # 2. DuckDuckGo 'lite' backend
     try:
         with DDGS(timeout=8) as ddgs:
             raw = list(ddgs.text(clean_q, backend="lite", max_results=max_results))
@@ -100,12 +145,11 @@ def search_web(query: str, max_results: int = 4) -> list[SearchResult]:
                     if u and (t or s):
                         results.append(SearchResult(title=t, url=u, snippet=s))
                 if results:
-                    logger.info("Found %d results via DDGS lite for: '%s'", len(results), clean_q)
                     return results
     except Exception as exc:
         logger.debug("DDGS lite backend error for '%s': %s", clean_q, exc)
 
-    # Attempt 2: DDGS with 'auto' backend
+    # 3. DuckDuckGo 'auto' backend
     try:
         with DDGS(timeout=8) as ddgs:
             raw = list(ddgs.text(clean_q, backend="auto", max_results=max_results))
@@ -118,17 +162,14 @@ def search_web(query: str, max_results: int = 4) -> list[SearchResult]:
                     if u and (t or s):
                         results.append(SearchResult(title=t, url=u, snippet=s))
                 if results:
-                    logger.info("Found %d results via DDGS auto for: '%s'", len(results), clean_q)
                     return results
     except Exception as exc:
         logger.debug("DDGS auto backend error for '%s': %s", clean_q, exc)
 
-    # Attempt 3: Direct HTTP fallback
-    logger.info("Falling back to direct HTTP search for: '%s'", clean_q)
+    # 4. Direct HTTP scraper fallback
     fallback_results = _fallback_httpx_search(clean_q, max_results=max_results)
     if fallback_results:
-        logger.info("Found %d results via HTTP fallback for: '%s'", len(fallback_results), clean_q)
         return fallback_results
 
-    logger.warning("All search methods returned 0 results for: '%s'", clean_q)
+    logger.warning("All search engines returned 0 results for query: '%s'", clean_q)
     return []

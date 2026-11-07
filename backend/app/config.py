@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     # Security passcode (protects API & Swagger UI)
     app_access_key: str = Field(default="", alias="APP_ACCESS_KEY")
 
+    # Search Engine: Tavily API Key (Optional, falls back to DuckDuckGo if empty)
+    tavily_api_key: str = Field(default="", alias="TAVILY_API_KEY")
+
     # LLM Provider Selection: "gemini" | "groq" | "custom" (OpenAI-compatible)
     llm_provider: str = Field(default="gemini", alias="LLM_PROVIDER")
 
