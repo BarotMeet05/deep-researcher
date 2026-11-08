@@ -13,6 +13,16 @@ services:
         sync: false
       - key: GEMINI_MODEL
         value: gemini-2.5-flash
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      - key: CUSTOM_LLM_API_KEY
+        sync: false
+      - key: CUSTOM_LLM_MODEL
+        value: meta-llama/Llama-3.1-8B-Instruct
+      - key: CUSTOM_LLM_BASE_URL
+        value: https://api-inference.huggingface.co/v1
       - key: APP_ACCESS_KEY
         sync: false
       - key: TAVILY_API_KEY
