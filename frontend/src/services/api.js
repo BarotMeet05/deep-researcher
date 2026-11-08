@@ -60,6 +60,33 @@ export function clearAllHistory() {
 }
 
 /**
+ * Sends a follow-up question about an existing dossier.
+ * Returns { answer: "<markdown string>" }
+ */
+export async function followUpChat({ question, dossier = '', topic = '', passcode } = {}) {
+  const baseUrl = import.meta.env.VITE_API_URL || '';
+  const url = `${baseUrl}/api/v1/chat`;
+
+  const headers = { 'Content-Type': 'application/json' };
+  const code = passcode || getStoredPasscode();
+  if (code) headers['X-App-Key'] = code;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ question, dossier, topic }),
+  });
+
+  if (!response.ok) {
+    let detail = response.statusText;
+    try { detail = (await response.json()).error || detail; } catch (_) {}
+    throw new Error(`Chat error ${response.status}: ${detail}`);
+  }
+
+  return response.json(); // { answer: string }
+}
+
+/**
  * Initiates SSE stream research call.
  * Uses fetch + ReadableStream for custom auth header support.
  */

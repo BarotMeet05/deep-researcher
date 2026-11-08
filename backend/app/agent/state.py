@@ -33,6 +33,9 @@ class ResearchState(TypedDict):
     iteration: int
     max_iterations: int
 
+    # Detected format/intent style: "comparison", "curriculum_guide", "deep_dive", "executive_brief"
+    format_style: str
+
     # Final synthesized Markdown report or clarification message
     final_report: str
 

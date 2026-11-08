@@ -1,7 +1,12 @@
 """
 LangGraph Nodes for DeepResearcher
 Defines the functional nodes: Planner, Searcher, Critic, and Synthesizer.
-Includes conversational intent evaluation and clarification prompting.
+
+Key design:
+- Planner: validates intent, classifies format_style (comparison / curriculum_guide /
+  deep_dive / executive_brief / conversational), and generates targeted search queries.
+- Synthesizer: picks the appropriate Markdown template based on format_style so that
+  the output structure always matches the nature of the question.
 """
 import logging
 from pydantic import BaseModel, Field
@@ -19,29 +24,227 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 class ResearchTopicEvaluation(BaseModel):
     is_valid_topic: bool = Field(
-        description="True if the input is a genuine topic, technical question, domain inquiry, or comparison that can be investigated. False if it is a greeting (e.g. 'hi', 'hello'), conversational chatter, or too underspecified to research."
+        description=(
+            "True if the input is a genuine topic, technical question, domain inquiry, "
+            "or comparison that can be investigated. False if it is a greeting (e.g. 'hi', "
+            "'hello'), conversational chatter, or too underspecified to research."
+        )
     )
     clarification_message: str = Field(
         default="",
-        description="If is_valid_topic is False, a polite, conversational response explaining what DeepResearcher is and prompting the user with 2-3 concrete example research inquiries."
+        description=(
+            "If is_valid_topic is False, a polite, conversational response explaining what "
+            "DeepResearcher is and prompting the user with 2-3 concrete example research inquiries."
+        ),
+    )
+    format_style: str = Field(
+        default="executive_brief",
+        description=(
+            "The most appropriate output structure for this topic. Choose exactly one of:\n"
+            "  'comparison'       – User wants to compare two or more technologies, products, "
+            "approaches, or frameworks (e.g. 'PostgreSQL vs SQLite', 'React vs Vue').\n"
+            "  'curriculum_guide' – User wants a curated learning path, problem set, reading "
+            "list, or ranked resource guide (e.g. 'best coding questions for graphs', "
+            "'top 10 papers on transformers').\n"
+            "  'deep_dive'        – User wants an in-depth technical explanation, architecture "
+            "breakdown, or how-something-works analysis (e.g. 'how does RAFT consensus work', "
+            "'explain transformer attention').\n"
+            "  'executive_brief'  – User wants market intelligence, industry trends, business "
+            "strategy, timelines, or high-level strategic outlook (e.g. 'state of EV batteries "
+            "2026', 'commercial viability of solid-state batteries').\n"
+            "Default to 'executive_brief' when unsure."
+        ),
     )
     search_queries: list[str] = Field(
         default_factory=list,
-        description="If is_valid_topic is True, 3 to 4 natural, diverse web search queries exploring different aspects of the topic."
+        description=(
+            "If is_valid_topic is True, 3 to 4 natural, diverse web search queries exploring "
+            "different aspects of the topic."
+        ),
     )
 
 
 class CritiqueDecision(BaseModel):
     has_gaps: bool = Field(
-        description="True if critical aspects, data points, or viewpoints are missing from the gathered evidence. False if gathered info is sufficient."
+        description=(
+            "True if critical aspects, data points, or viewpoints are missing from the gathered "
+            "evidence. False if gathered info is sufficient."
+        )
     )
     critique: str = Field(
-        description="Detailed explanation of what information is present, what is missing, and whether additional searches are genuinely required."
+        description=(
+            "Detailed explanation of what information is present, what is missing, and whether "
+            "additional searches are genuinely required."
+        )
     )
     follow_up_queries: list[str] = Field(
         default_factory=list,
-        description="Specific, targeted follow-up search queries to fill the identified gaps. Empty if has_gaps is False."
+        description=(
+            "Specific, targeted follow-up search queries to fill the identified gaps. "
+            "Empty if has_gaps is False."
+        ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Synthesizer prompt templates — one per format_style
+# ---------------------------------------------------------------------------
+
+_PROMPT_COMPARISON = """\
+You are a senior technical analyst. Write a rigorous, structured **comparison dossier** in Markdown.
+
+EVIDENCE & QUALITY RULES:
+1. RELEVANCE FILTERING: Discard completely off-topic sources (pop culture, unrelated products, etc.).
+2. TECHNICAL DEPTH: Fill in known facts from your domain knowledge if live sources were sparse. \
+Never leave table cells empty.
+3. Add a brief note if live web evidence was partially unavailable.
+
+REQUIRED OUTPUT STRUCTURE (use exactly these headings):
+# Research Dossier: <Descriptive Title>
+
+## TL;DR — Verdict
+One paragraph. When should you choose option A? When option B? Clear, opinionated recommendation.
+
+## Side-by-Side Comparison
+
+| Criterion | <Option A> | <Option B> |
+|-----------|-----------|-----------|
+| ... | ... | ... |
+
+Fill at least 10 meaningful rows (performance, footprint, concurrency, licensing, ecosystem, etc.)
+
+## Deep-Dive Analysis
+### <Option A>
+### <Option B>
+### Trade-offs & Edge Cases
+
+## Decision Framework
+Bullet list of "Choose A if…" / "Choose B if…" scenarios.
+
+## Sources & References
+- [Title](URL) for every cited source.
+"""
+
+_PROMPT_CURRICULUM = """\
+You are an expert educator and senior software engineer. Write a **curated learning curriculum** \
+in Markdown — structured like a high-quality syllabus or roadmap, NOT a corporate executive brief.
+
+EVIDENCE & QUALITY RULES:
+1. RELEVANCE FILTERING: Discard off-topic noise.
+2. COMPLETENESS: Use your deep technical knowledge to fill gaps the web search may have missed.
+3. For coding problems, include the problem name, platform (e.g. LeetCode), difficulty, the core \
+concept/pattern it teaches, and a brief note on the key insight or common mistake.
+
+REQUIRED OUTPUT STRUCTURE (use exactly these headings):
+# <Topic> — Learning Roadmap & Curated Problem Set
+
+## Overview & Why This Matters
+2-3 sentences on why mastering this topic is valuable.
+
+## Core Concepts & Prerequisites
+Bullet list of concepts learners must understand first.
+
+## Curated Problem Set / Resource List
+
+Organise by theme or difficulty tier (Easy → Medium → Hard or by conceptual category). \
+For each item:
+
+### <Category or Tier Name>
+
+| # | Problem / Resource | Platform | Difficulty | Core Pattern / What You Learn | Key Insight |
+|---|--------------------|----------|------------|-------------------------------|-------------|
+| 1 | ... | ... | ... | ... | ... |
+
+## Algorithmic Patterns & Code Templates
+For each major pattern mentioned, include a brief Python/pseudocode template with inline comments.
+
+## Common Mistakes & How to Avoid Them
+Bullet list of traps learners fall into and the counter-strategy.
+
+## Practice Strategy & Timeline
+How many problems per day, in what order, over how many weeks.
+
+## Sources & References
+- [Title](URL)
+"""
+
+_PROMPT_DEEP_DIVE = """\
+You are a principal engineer and technical writer. Write a **deep-dive technical explanation** \
+in Markdown — thorough, precise, and practitioner-oriented.
+
+EVIDENCE & QUALITY RULES:
+1. RELEVANCE FILTERING: Discard off-topic sources entirely.
+2. TECHNICAL COMPLETENESS: Draw on your domain knowledge freely when sources are sparse.
+3. Use diagrams where helpful. Represent flow or architecture as Mermaid code blocks (```mermaid).
+4. Include concrete code examples where relevant (use appropriate language fences).
+
+REQUIRED OUTPUT STRUCTURE (use exactly these headings):
+# Deep Dive: <Descriptive Title>
+
+## What Is It & Why Does It Matter
+Brief motivation and context.
+
+## Core Mechanics
+Explain the internals step-by-step. Use subsections per component.
+
+## Architecture / Flow Diagram
+Include at least one Mermaid diagram (flowchart or sequenceDiagram):
+
+```mermaid
+flowchart TD
+    A[...] --> B[...]
+```
+
+## Worked Example
+Concrete walkthrough with code.
+
+## Edge Cases, Failure Modes & Gotchas
+What goes wrong and why.
+
+## Performance Characteristics
+Time & space complexity, benchmarks, or latency profiles.
+
+## Real-World Usage & Ecosystem
+Libraries, frameworks, production use-cases.
+
+## Sources & References
+- [Title](URL)
+"""
+
+_PROMPT_EXECUTIVE_BRIEF = """\
+You are a senior research analyst producing an **executive intelligence brief** in Markdown — \
+the kind delivered to a CTO, investor, or strategy team.
+
+EVIDENCE & QUALITY RULES:
+1. RELEVANCE FILTERING: Discard entirely off-topic sources.
+2. COMPLETENESS: Supplement sparse web evidence with established industry knowledge.
+3. NEVER leave table cells with "No data available". Use industry consensus or flag as estimate.
+
+REQUIRED OUTPUT STRUCTURE (use exactly these headings):
+# Research Dossier: <Descriptive Title>
+
+## Executive Summary
+3-5 sentence high-level brief. Key takeaways, current state, and recommendation.
+
+## Detailed Findings & Thematic Analysis
+Grouped sub-sections covering major themes, technologies, players, timelines.
+
+## Comparative Breakdown / Data Table
+Markdown table with at least 8 meaningful rows.
+
+## Strategic Implications & Future Outlook
+Risks, opportunities, timeline milestones, what to watch.
+
+## Sources & References
+- [Title](URL)
+"""
+
+_FORMAT_PROMPTS: dict[str, str] = {
+    "comparison": _PROMPT_COMPARISON,
+    "curriculum_guide": _PROMPT_CURRICULUM,
+    "deep_dive": _PROMPT_DEEP_DIVE,
+    "executive_brief": _PROMPT_EXECUTIVE_BRIEF,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -50,8 +253,9 @@ class CritiqueDecision(BaseModel):
 def planner_node(state: ResearchState) -> dict:
     """
     Evaluates whether the user's input is an actionable research topic or conversational chatter.
-    If conversational (e.g. 'Hi'), asks the user to clarify/specify their research topic.
-    If actionable, decomposes the topic into targeted web search queries.
+    - Conversational/ambiguous input → returns a clarification message immediately.
+    - Valid topic → generates targeted search queries AND classifies format_style so the
+      Synthesizer can pick the most appropriate output structure.
     """
     topic = state["topic"]
     logger.info("PlannerNode: evaluating prompt intent: '%s'", topic)
@@ -61,12 +265,17 @@ def planner_node(state: ResearchState) -> dict:
 
     system_prompt = (
         "You are DeepResearcher, an autonomous AI research assistant.\n\n"
-        "First, evaluate the user's input:\n"
-        "- If the user says 'hi', 'hello', asks 'who are you', or enters a conversational greeting/ambiguous fragment:\n"
-        "  Set is_valid_topic=False and write a warm, helpful clarification message in Markdown explaining that you are an autonomous "
-        "research agent, and inviting them to provide a specific question or topic they would like to investigate (give 2-3 concrete examples).\n"
-        "- If the input is a valid topic, technical trade-off, or research inquiry:\n"
-        "  Set is_valid_topic=True and generate 3 to 4 natural, high-signal web search queries covering different technical angles."
+        "Step 1 — Validate intent:\n"
+        "  • If the user sends a greeting ('hi', 'hello'), asks who you are, or submits something "
+        "too vague to research meaningfully: set is_valid_topic=False and write a warm Markdown "
+        "clarification message inviting them to give a specific research topic (include 2-3 examples).\n"
+        "  • Otherwise set is_valid_topic=True.\n\n"
+        "Step 2 — If valid, classify the best output format:\n"
+        "  • 'comparison'       → user is comparing two or more options (technologies, products, etc.)\n"
+        "  • 'curriculum_guide' → user wants a learning path, problem set, resource list, or reading list\n"
+        "  • 'deep_dive'        → user wants a detailed explanation of how something works\n"
+        "  • 'executive_brief'  → user wants market/industry analysis, trends, strategic outlook\n\n"
+        "Step 3 — Generate 3-4 precise, diverse web search queries covering the key angles."
     )
 
     evaluation: ResearchTopicEvaluation = structured_llm.invoke([
@@ -79,6 +288,7 @@ def planner_node(state: ResearchState) -> dict:
         return {
             "needs_clarification": True,
             "final_report": evaluation.clarification_message,
+            "format_style": "executive_brief",
             "status_message": "Awaiting clarified research topic.",
             "plan_queries": [],
             "search_queries": [],
@@ -88,15 +298,23 @@ def planner_node(state: ResearchState) -> dict:
     if not queries:
         queries = [topic]
 
-    logger.info("PlannerNode generated %d queries for topic '%s': %s", len(queries), topic, queries)
+    format_style = evaluation.format_style or "executive_brief"
+    if format_style not in _FORMAT_PROMPTS:
+        format_style = "executive_brief"
+
+    logger.info(
+        "PlannerNode: topic='%s' | format_style='%s' | %d queries: %s",
+        topic, format_style, len(queries), queries,
+    )
 
     return {
         "needs_clarification": False,
         "plan_queries": queries,
         "search_queries": queries,
+        "format_style": format_style,
         "iteration": 1,
         "max_iterations": state.get("max_iterations", 2),
-        "status_message": f"Planned {len(queries)} targeted search queries.",
+        "status_message": f"Classified as '{format_style}'. Planned {len(queries)} targeted search queries.",
     }
 
 
@@ -182,7 +400,10 @@ def critic_node(state: ResearchState) -> dict:
     follow_up_queries = [fq.strip() for fq in decision.follow_up_queries if fq.strip()]
 
     if decision.has_gaps and follow_up_queries:
-        logger.info("CriticNode: gaps identified. Formulated %d targeted queries for iteration %d: %s", len(follow_up_queries), iteration + 1, follow_up_queries)
+        logger.info(
+            "CriticNode: gaps identified. Formulated %d targeted queries for iteration %d: %s",
+            len(follow_up_queries), iteration + 1, follow_up_queries,
+        )
         return {
             "gaps_found": True,
             "critique": decision.critique,
@@ -194,50 +415,47 @@ def critic_node(state: ResearchState) -> dict:
         logger.info("CriticNode: evidence sufficient. Moving to synthesis.")
         return {
             "gaps_found": False,
-            "critique": decision.critique if decision.has_gaps else "Information is comprehensive. Ready to synthesize dossier.",
+            "critique": decision.critique if decision.has_gaps else "Information is comprehensive. Ready to synthesize.",
             "search_queries": [],
-            "status_message": "Proceeding to executive report synthesis.",
+            "status_message": "Proceeding to synthesis.",
         }
 
 
 # ---------------------------------------------------------------------------
-# Node 4: Synthesizer
+# Node 4: Synthesizer — Adaptive format-aware report generation
 # ---------------------------------------------------------------------------
 def synthesizer_node(state: ResearchState) -> dict:
     """
-    Synthesizes evidence and deep technical knowledge into an executive Markdown dossier.
-    Filters out off-topic noise and ensures technical comparative tables are populated.
+    Synthesizes evidence into a Markdown report whose structure is determined by
+    the format_style classified by the Planner:
+      - comparison       → trade-off matrix & decision framework
+      - curriculum_guide → learning roadmap, problem table, code templates
+      - deep_dive        → mechanics, Mermaid diagrams, code examples
+      - executive_brief  → classic executive dossier with strategic outlook
     """
     topic = state["topic"]
     sources = state.get("sources", [])
+    format_style = state.get("format_style", "executive_brief")
+    if format_style not in _FORMAT_PROMPTS:
+        format_style = "executive_brief"
 
-    logger.info("SynthesizerNode: generating final report from %d sources", len(sources))
+    logger.info(
+        "SynthesizerNode: format_style='%s', generating report from %d sources",
+        format_style, len(sources),
+    )
 
     evidence_text = "\n\n".join(
         f"Source [{i+1}]: {s['title']}\nURL: {s['url']}\nSnippet: {s['snippet']}"
         for i, s in enumerate(sources)
     )
 
-    system_prompt = """You are a senior technical research analyst. 
-Your task is to synthesize an executive-grade, comprehensive Markdown research dossier on the requested topic based on gathered evidence and deep domain knowledge.
+    system_prompt = _FORMAT_PROMPTS[format_style]
 
-CRITICAL EVIDENCE & RELEVANCE RULES:
-1. RELEVANCE FILTERING: Carefully inspect the provided evidence. If any source is completely off-topic, noise, or irrelevant (e.g. songs, pop culture, unrelated products), IGNORE and EXCLUDE it completely. Do not mention or cite irrelevant noise in the report.
-2. TECHNICAL COMPLETENESS: If live web search evidence was sparse, incomplete, or blocked by upstream search engines, you MUST synthesize your comprehensive technical knowledge of the subject (e.g., PostgreSQL vs SQLite architecture, embedded footprints, concurrency, SQLite WAL vs Postgres MVCC, replication engines like LiteFS / ElectricSQL, edge deployment patterns) to produce a thorough, high-value technical comparison.
-3. DATA TABLE INTEGRITY: NEVER leave the comparative table empty or filled with 'No data available in sources'. Provide the factual, industry-standard comparative matrix based on real architectural benchmarks and specifications.
-4. If web retrieval had sparse coverage, add an executive note:
-   '> **Note on Evidence Retrieval**: Live web evidence had partial coverage; supplemented with established architectural specifications and system design benchmarks.'
-
-Formatting Requirements:
-1. # <Title of Research Dossier>
-2. ## Executive Summary (High-level overview of key answers, trade-offs, and takeaways)
-3. ## Detailed Findings & Thematic Analysis (In-depth analysis grouped into logical sub-topics)
-4. ## Comparative Breakdown / Data Table (Comprehensive Markdown table comparing key technical criteria)
-5. ## Strategic Implications & Future Outlook (Specific to the target environment/domain)
-6. ## Sources & References (List all relevant technical sources with clickable markdown links in format: - [Title](URL))
-"""
-
-    user_msg = f"Research Topic: {topic}\n\nGathered Evidence:\n{evidence_text or 'No direct web snippets available.'}\n\nWrite the comprehensive research dossier:"
+    user_msg = (
+        f"Research Topic: {topic}\n\n"
+        f"Gathered Evidence:\n{evidence_text or 'No direct web snippets available — use domain knowledge.'}\n\n"
+        "Write the complete Markdown report now:"
+    )
 
     llm = get_llm(temperature=0.1)
     response = llm.invoke([
@@ -248,5 +466,5 @@ Formatting Requirements:
     logger.info("SynthesizerNode: report generated (%d characters)", len(response.content))
     return {
         "final_report": response.content,
-        "status_message": "Executive research dossier generated successfully.",
+        "status_message": f"Report synthesized ({format_style} format).",
     }
